@@ -1,0 +1,2 @@
+# browsepilot_web_research_agent_openai_playwright
+BrowsePilot automates web research using OpenAI and Playwright browser automation
