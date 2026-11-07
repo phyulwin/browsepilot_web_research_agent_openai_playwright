@@ -1,0 +1,15 @@
+# .dockerignore — exclude credentials, developer dependencies, and private research data.
+.git
+.env
+.env.*
+!.env.example
+.venv
+**/__pycache__
+**/*.pyc
+**/*.tsbuildinfo
+frontend/node_modules
+frontend/dist
+data
+.verification
+docs/screenshots
+*.log
