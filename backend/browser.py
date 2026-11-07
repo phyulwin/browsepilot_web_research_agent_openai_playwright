@@ -1,11 +1,19 @@
 # backend/browser.py — isolated Playwright browser and a fixed read-only action interpreter.
 import asyncio
+import logging
+import sys
 from urllib.parse import quote_plus
 
 from playwright.async_api import async_playwright
 
 from backend.models import Action
 from backend.safety import EgressProxy, validate_url
+
+logger = logging.getLogger(__name__)
+
+
+class BrowserStartupError(RuntimeError):
+    """Expose only application-authored, actionable browser startup errors."""
 
 
 class ResearchBrowser:
@@ -15,6 +23,7 @@ class ResearchBrowser:
         # Track resources even during partial startup so cleanup always has ownership.
         self.proxy = EgressProxy()
         self.runtime = None
+        self.playwright_manager = None
         self.browser = None
         self.context = None
         self.page = None
@@ -22,9 +31,41 @@ class ResearchBrowser:
         self.blocked_requests = 0
 
     async def start(self):
+        # Detect an incompatible host loop before creating the proxy or Playwright transport.
+        if sys.platform == "win32" and not isinstance(asyncio.get_running_loop(), asyncio.ProactorEventLoop):
+            raise BrowserStartupError(
+                "Playwright requires a Windows Proactor event loop for subprocesses. "
+                "Restart from the project root with .\\.venv\\Scripts\\python.exe -m backend.run; "
+                "do not use Uvicorn --reload or multiple workers."
+            )
+        try:
+            await self._start()
+        except BaseException as exc:
+            # Release partially acquired resources even if startup is cancelled or times out.
+            try:
+                await self.close()
+            except Exception as cleanup_error:
+                logger.error("Partial browser cleanup failed (%s)", type(cleanup_error).__name__)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            if isinstance(exc, NotImplementedError):
+                raise BrowserStartupError(
+                    "The server event loop cannot launch the Playwright subprocess. "
+                    "On Windows, restart with .\\.venv\\Scripts\\python.exe -m backend.run without --reload."
+                ) from exc
+            if isinstance(exc, Exception):
+                raise BrowserStartupError(
+                    f"Browser startup failed ({type(exc).__name__}). Ensure the Playwright Chromium "
+                    "browser is installed for the backend environment (python -m playwright install chromium), "
+                    "and check host permissions, sandbox support, and browser system dependencies."
+                ) from exc
+            raise
+
+    async def _start(self):
         # Force all browser traffic through the public-address proxy, including loopback URLs.
         proxy_url = await self.proxy.start()
-        self.runtime = await async_playwright().start()
+        self.playwright_manager = async_playwright()
+        self.runtime = await self.playwright_manager.start()
         self.browser = await self.runtime.chromium.launch(headless=True, chromium_sandbox=True, proxy={"server": proxy_url}, args=["--proxy-bypass-list=<-loopback>", "--disable-quic", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"])
         self.context = await self.browser.new_context(viewport={"width": 1280, "height": 800}, accept_downloads=False, service_workers="block", permissions=[], ignore_https_errors=False)
         await self.context.route("**/*", self.guard_request)
@@ -117,13 +158,16 @@ class ResearchBrowser:
         return await self.page.screenshot(type="jpeg", quality=65, timeout=6000)
 
     async def close(self):
-        # Clean up each owned resource even if another cleanup operation fails.
+        # Detach ownership first so startup cleanup and the agent's finally block are idempotent.
+        browser, manager = self.browser, self.playwright_manager
+        self.browser = self.context = self.page = self.runtime = self.playwright_manager = None
         try:
-            if self.browser:
-                await self.browser.close()
+            if browser:
+                await asyncio.wait_for(browser.close(), timeout=5)
         finally:
             try:
-                if self.runtime:
-                    await self.runtime.stop()
+                # Retain the manager even if start failed before returning a runtime handle.
+                if manager:
+                    await asyncio.wait_for(manager.__aexit__(None, None, None), timeout=5)
             finally:
                 await self.proxy.close()

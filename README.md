@@ -75,7 +75,7 @@ Copy-Item .env.example .env
 # Build and serve the React frontend from FastAPI.
 npm ci --prefix frontend
 npm run build --prefix frontend
-.\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 1
+.\.venv\Scripts\python.exe -m backend.run
 ```
 
 ### macOS / Linux
@@ -95,7 +95,11 @@ npm run build --prefix frontend
 uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-For frontend hot reload, run `npm run dev --prefix frontend` in another terminal and open [http://127.0.0.1:5173](http://127.0.0.1:5173); Vite proxies `/api` to port 8000. Restart the backend after Python changes; avoid Uvicorn reload on Windows because subprocess event-loop selection can conflict with Playwright.
+For frontend hot reload, run `npm run dev --prefix frontend` in another terminal and open [http://127.0.0.1:5173](http://127.0.0.1:5173); Vite proxies `/api` to port 8000.
+
+On Windows, use `python -m backend.run` from the repository root (with the virtual environment's Python as shown above); optional `--host` and `--port` arguments are supported. The launcher creates a top-level Proactor event loop before starting FastAPI and calls Uvicorn's asynchronous server on that loop, without nested loops or request-time policy changes. Restart the backend manually after Python edits; this launcher deliberately does not accept `--reload` or `--workers`.
+
+The pinned Uvicorn version selects a Selector loop on Windows when reload or multiple workers enable its subprocess supervisor. Windows Selector loops cannot run the subprocess transport required by Playwright, while Proactor loops can ([Python asyncio platform documentation](https://docs.python.org/3/library/asyncio-platforms.html)). `WindowsSelectorEventLoopPolicy` likewise creates incompatible loops; setting `WindowsProactorEventLoopPolicy` inside an already-running FastAPI app cannot replace its active loop, and Uvicorn's explicit loop factory can override policy-based defaults. The dedicated launcher avoids both issues; Linux and Docker keep their existing startup commands. This fix was implemented by source inspection only, without tests or runtime verification.
 
 ## Environment variables
 

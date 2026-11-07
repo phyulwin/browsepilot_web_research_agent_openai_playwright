@@ -5,7 +5,7 @@ import time
 from urllib.parse import urlsplit
 
 from backend import prompts
-from backend.browser import ResearchBrowser
+from backend.browser import BrowserStartupError, ResearchBrowser
 from backend.config import settings
 from backend.llm import BudgetExceeded, ModelClient, ModelUnavailable
 from backend.models import Action, Extraction, Plan, Report
@@ -84,7 +84,7 @@ class AgentManager:
         # Prevent upstream exception bodies or URLs containing credentials from reaching the UI.
         if isinstance(exc, TimeoutError):
             return "The configured time limit was reached; collected evidence is saved."
-        if isinstance(exc, (BudgetExceeded, ModelUnavailable)):
+        if isinstance(exc, (BudgetExceeded, ModelUnavailable, BrowserStartupError)):
             return str(exc)
         return f"Research could not continue ({type(exc).__name__}); check configuration, API access, and the action log."
 
