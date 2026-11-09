@@ -3,6 +3,10 @@
 .env
 .env.*
 !.env.example
+# Never include nested frontend/local credential files in build contexts.
+**/.env
+**/.env.*
+!**/.env.example
 .venv
 **/__pycache__
 **/*.pyc

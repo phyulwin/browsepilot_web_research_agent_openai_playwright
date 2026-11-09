@@ -35,7 +35,8 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { api } from "./api";
+import { api, apiFetch, subscribe } from "./api";
+import { AuthenticatedImage } from "./AuthenticatedImage";
 import type { Claim, Config, Session, Status } from "./types";
 
 // Labels translate persistence states into clear user-facing language.
@@ -182,7 +183,7 @@ function ResearchReport({
   const [copied, setCopied] = useState(false);
   async function copyReport() {
     try {
-      const response = await fetch(`/api/sessions/${session.id}/report.md`);
+      const response = await apiFetch(`/sessions/${session.id}/report.md`);
       if (!response.ok) throw new Error("The report could not be downloaded.");
       await navigator.clipboard.writeText(await response.text());
       setCopied(true);
@@ -194,6 +195,18 @@ function ResearchReport({
           : "Copy is unavailable; use Download Markdown.",
       );
     }
+  }
+  // Download via authenticated fetch; the temporary link contains only a local blob URL.
+  async function downloadReport() {
+    try {
+      const response = await apiFetch(`/sessions/${session.id}/report.md`);
+      if (!response.ok) throw new Error("The report could not be downloaded.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url; link.download = `browsepilot-${session.id.slice(0, 8)}.md`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) { notify(error instanceof Error ? error.message : "Download unavailable"); }
   }
   return (
     <article className="panel report">
@@ -210,14 +223,13 @@ function ResearchReport({
           {copied ? <CheckCheck size={15} /> : <Copy size={15} />}
           {copied ? "Copied" : "Copy report"}
         </button>
-        <a
+        <button
           className="button secondary small"
-          href={`/api/sessions/${session.id}/report.md`}
-          download
+          onClick={downloadReport}
         >
           <ArrowDownToLine size={15} />
           Download Markdown
-        </a>
+        </button>
       </div>
       {report.summary.length > 0 && (
         <section>
@@ -530,8 +542,8 @@ function LiveWorkspace({
               </div>
               <div className="browser-canvas">
                 {session.screenshot_version > 0 ? (
-                  <img
-                    src={`/api/sessions/${session.id}/screenshot?v=${session.screenshot_version}`}
+                  <AuthenticatedImage
+                    path={`/sessions/${session.id}/screenshot?v=${session.screenshot_version}`}
                     alt={`Actual browser capture: ${session.page_title || session.active_url}`}
                   />
                 ) : (
@@ -715,20 +727,14 @@ export default function App() {
     return () => window.removeEventListener("hashchange", route);
   }, [auth, route]);
   useEffect(() => {
-    // Native EventSource reconnects automatically; each event is a complete persisted snapshot.
+    // Authenticated fetch streams reconnect with complete snapshots across origins.
     if (!session || !activeStates.includes(session.status)) return;
-    const stream = new EventSource(`/api/sessions/${session.id}/events`);
-    stream.addEventListener("snapshot", (event) => {
-      const data: Session = JSON.parse((event as MessageEvent).data);
+    return subscribe(`/sessions/${session.id}/events`, (value) => {
+      const data = value as Session;
       setConnected(true);
       if (selectedId.current === data.id) setSession(data);
-      if (!activeStates.includes(data.status)) {
-        stream.close();
-          }
-    });
-    stream.onopen = () => setConnected(true);
-    stream.onerror = () => setConnected(false);
-    return () => stream.close();
+      return activeStates.includes(data.status);
+    }, setConnected);
   }, [session?.id, session?.status]);
   useEffect(() => {
     if (toast) {
@@ -1028,7 +1034,7 @@ export default function App() {
         <section className="hero">
           <img
             className="hero-image"
-            src="/assets/glacier.webp"
+            src={`${import.meta.env.BASE_URL}assets/glacier.webp`}
             alt="Blue ice of Perito Moreno Glacier meeting a mountain lake in Patagonia"
           />
           <div className="hero-shade" />

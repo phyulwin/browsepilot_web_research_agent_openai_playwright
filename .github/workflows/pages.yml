@@ -1,0 +1,51 @@
+# pages.yml — opt-in GitHub Pages deployment; never deploy the backend from CI.
+name: Deploy frontend to GitHub Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    # Enable this repository variable only when frontend publication is authorized.
+    if: vars.DEPLOY_PAGES == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/configure-pages@v5
+      - name: Require the public backend URL
+        env:
+          API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          # Only a public HTTPS origin belongs in the compiled frontend.
+          case "$API_URL" in https://*.run.app) ;; *) echo "Set VITE_API_URL to the Cloud Run HTTPS origin without a trailing slash"; exit 1 ;; esac
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_BASE_PATH: /browsepilot_web_research_agent_openai_playwright/
+        run: |
+          # Build only; no tests or application execution.
+          npm ci
+          npm run build
+          touch dist/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+      - name: Publish Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

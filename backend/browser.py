@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, quote_plus, urlsplit
 from playwright.async_api import async_playwright
 
 from backend.models import Action
+from backend.config import settings
 from backend.research import SEARCH_URLS, domain, is_search
 from backend.safety import EgressProxy, validate_url
 
@@ -79,7 +80,7 @@ class ResearchBrowser:
         proxy_url = await self.proxy.start()
         self.playwright_manager = async_playwright()
         self.runtime = await self.playwright_manager.start()
-        self.browser = await self.runtime.chromium.launch(headless=True, chromium_sandbox=True, proxy={"server": proxy_url}, args=["--proxy-bypass-list=<-loopback>", "--disable-quic", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"])
+        self.browser = await self.runtime.chromium.launch(headless=True, chromium_sandbox=settings.chromium_sandbox, proxy={"server": proxy_url}, args=["--proxy-bypass-list=<-loopback>", "--disable-quic", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"])
         self.context = await self.browser.new_context(viewport={"width": 1280, "height": 800}, accept_downloads=False, service_workers="block", permissions=[], ignore_https_errors=False)
         await self.context.route("**/*", self.guard_request)
         await self.context.route_web_socket("**/*", lambda socket: socket.close())

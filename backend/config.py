@@ -1,13 +1,14 @@
 # backend/config.py — validated server-only environment configuration.
 from pathlib import Path
+import os
 
 from dotenv import dotenv_values
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# Resolve the credential file relative to the project, never the shell's working directory.
-DOTENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+# Default to the project file; Cloud Run explicitly selects its mounted Secret Manager file.
+DOTENV_FILE = Path(os.environ.get("BROWSEPILOT_ENV_FILE", str(Path(__file__).resolve().parent.parent / ".env")))
 
 
 def project_api_key():
@@ -26,7 +27,8 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     frontend_dir: Path = Path("frontend/dist")
     max_steps: int = Field(default=18, ge=1, le=60)
-    max_runtime_seconds: int = Field(default=240, ge=30, le=900)
+    max_runtime_seconds: int = Field(default=240, ge=30, le=1200)
+    chromium_sandbox: bool = True
     max_concurrent_sessions: int = Field(default=2, ge=1, le=4)
     max_session_tokens: int = Field(default=60000, ge=8000, le=200000)
     max_model_calls: int = Field(default=32, ge=4, le=100)

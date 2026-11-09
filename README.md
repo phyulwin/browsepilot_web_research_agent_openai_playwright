@@ -1,5 +1,7 @@
 # BrowsePilot
 
+For the temporary GitHub Pages + Cloud Run university demo, use [DEPLOYMENT.md](DEPLOYMENT.md): opt-in Pages automation, Secret Manager configuration, exact deployment commands, temporary storage, costs, and teardown. The existing local and standalone Docker instructions below remain available.
+
 ### Research, with direction.
 
 BrowsePilot is a public-web research assistant for **CS4680: Prompt Engineering**: describe a question, review an AI-generated checklist, approve it, and watch a real server-side Chromium browser collect evidence for a cited report.
@@ -102,6 +104,8 @@ On Windows, use `python -m backend.run` from the repository root (with the virtu
 The pinned Uvicorn version selects a Selector loop on Windows when reload or multiple workers enable its subprocess supervisor. Windows Selector loops cannot run the subprocess transport required by Playwright, while Proactor loops can ([Python asyncio platform documentation](https://docs.python.org/3/library/asyncio-platforms.html)). `WindowsSelectorEventLoopPolicy` likewise creates incompatible loops; setting `WindowsProactorEventLoopPolicy` inside an already-running FastAPI app cannot replace its active loop, and Uvicorn's explicit loop factory can override policy-based defaults. The dedicated launcher avoids both issues; Linux and Docker keep their existing startup commands. This fix was implemented by source inspection only, without tests or runtime verification.
 
 ## Environment variables
+
+Cloud Run's dedicated Docker target explicitly sets `BROWSEPILOT_ENV_FILE=/secrets/browsepilot/env` to select a Secret Manager dotenv mount instead of the default project `.env`; it still never falls back to a process `OPENAI_API_KEY`. This deployment-specific override is described in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 `OPENAI_API_KEY` is read **only from the `.env` file in the project root**, resolved relative to `backend/config.py`; system, terminal, and IDE environment keys cannot override it. Enter the literal key, not a `${VARIABLE}` reference; missing or blank values disable planning instead of falling back to another credential. Restart the backend after changing `.env`; startup logs show the credential file path and whether a key is configured, never the key itself. Other settings retain normal environment-variable precedence; all secrets remain on the server.
 

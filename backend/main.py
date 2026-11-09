@@ -11,6 +11,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.agent import AgentManager, report_markdown
@@ -44,7 +45,10 @@ def authorized(request):
     if not settings.access_password:
         return True
     try:
-        expiry, signature = request.cookies.get("browsepilot_access", "").split(".", 1)
+        # Bearer access avoids third-party cookie restrictions on GitHub Pages.
+        header = request.headers.get("authorization", "")
+        token = header[7:] if header.startswith("Bearer ") else request.cookies.get("browsepilot_access", "")
+        expiry, signature = token.split(".", 1)
         expected = hmac.new(settings.access_password.encode(), expiry.encode(), hashlib.sha256).hexdigest()
         return time.time() < int(expiry) and hmac.compare_digest(signature, expected)
     except (ValueError, TypeError):
@@ -60,7 +64,7 @@ async def security(request: Request, call_next):
             allowed = {str(request.base_url).rstrip("/"), *filter(None, settings.allowed_origins.split(","))}
             if origin and origin not in allowed:
                 return JSONResponse({"detail": "Cross-origin request rejected"}, status_code=403)
-            if request.headers.get("sec-fetch-site") == "cross-site":
+            if request.headers.get("sec-fetch-site") == "cross-site" and origin not in allowed:
                 return JSONResponse({"detail": "Cross-site request rejected"}, status_code=403)
             try:
                 if int(request.headers.get("content-length", "0")) > 16000:
@@ -74,7 +78,7 @@ async def security(request: Request, call_next):
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     return response
@@ -116,9 +120,15 @@ async def login(body: Login, request: Request):
         raise HTTPException(401, "Incorrect workspace password")
     expiry = str(int(time.time()) + 8 * 3600)
     signature = hmac.new(settings.access_password.encode(), expiry.encode(), hashlib.sha256).hexdigest()
-    response = JSONResponse({"authenticated": True})
+    response = JSONResponse({"authenticated": True, "access_token": expiry + "." + signature})
     response.set_cookie("browsepilot_access", expiry + "." + signature, httponly=True, secure=settings.cookie_secure, samesite="strict", max_age=8 * 3600)
     return response
+
+
+# CORS is outermost so preflight and authentication failures receive exact-origin headers.
+app.add_middleware(CORSMiddleware, allow_origins=[item.strip() for item in settings.allowed_origins.split(",") if item.strip()],
+                   allow_credentials=False, allow_methods=["GET", "POST"],
+                   allow_headers=["Authorization", "Content-Type"], expose_headers=["Content-Disposition"])
 
 
 @app.post("/api/logout")

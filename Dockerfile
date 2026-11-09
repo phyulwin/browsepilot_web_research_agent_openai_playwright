@@ -7,7 +7,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # The Python runtime owns Chromium; end users need only a web browser.
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     APP_ENV=production \
@@ -25,9 +25,24 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && chown -R browsepilot:browsepilot /app /opt/playwright \
     && rm -rf /var/lib/apt/lists/*
 COPY --chown=browsepilot:browsepilot backend/ ./backend/
-COPY --chown=browsepilot:browsepilot --from=frontend /build/dist/ ./frontend/dist/
 USER browsepilot
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8000')+'/api/health',timeout=4)"
 # One worker is required because the bounded job registry is intentionally in process.
 CMD ["sh", "-c", "exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers"]
+
+# Cloud Run demo: ephemeral files, mounted secret configuration, and no frontend build.
+FROM runtime AS cloudrun
+ENV DATA_DIR=/tmp/browsepilot \
+    FRONTEND_DIR=/app/no-frontend \
+    BROWSEPILOT_ENV_FILE=/secrets/browsepilot/env \
+    PORT=8080 \
+    MAX_RUNTIME_SECONDS=1200 \
+    MAX_CONCURRENT_SESSIONS=1 \
+    CHROMIUM_SANDBOX=false \
+    COOKIE_SECURE=true
+EXPOSE 8080
+
+# Preserve the existing default Docker/Compose single-origin deployment.
+FROM runtime AS standalone
+COPY --chown=browsepilot:browsepilot --from=frontend /build/dist/ ./frontend/dist/

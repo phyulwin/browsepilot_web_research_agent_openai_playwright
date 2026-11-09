@@ -1,0 +1,1 @@
+Visit https://www.python.org/about/ and explain what Python is. Identify three features described on that page and summarize them in simple language. Cite the original page for each finding.
