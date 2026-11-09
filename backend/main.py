@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.agent import AgentManager, report_markdown
-from backend.config import settings
+from backend.config import DOTENV_FILE, settings
 from backend.models import Approval, ResearchRequest
 from backend.storage import Store, now
 
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app):
     # Recover interrupted work once and keep all background jobs owned by this application.
+    logger.info("OpenAI API key source: %s (%s); system API keys are ignored", DOTENV_FILE, "configured" if settings.openai_api_key else "missing or empty")
     app.state.store = Store()
     app.state.manager = AgentManager(app.state.store)
     app.state.login_attempts = {}
@@ -150,7 +151,7 @@ def snapshot(session_id):
 def ensure_capacity():
     # Reject new work before making API calls when configuration or resource limits prevent it.
     if not settings.openai_api_key:
-        raise HTTPException(503, "Set OPENAI_API_KEY on the server to enable research planning")
+        raise HTTPException(503, "Set OPENAI_API_KEY in the project's .env file and restart the backend to enable research planning")
     if app.state.manager.busy():
         raise HTTPException(429, "All research slots are busy; wait for an active session to finish")
 

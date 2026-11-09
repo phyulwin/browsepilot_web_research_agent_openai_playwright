@@ -103,7 +103,9 @@ The pinned Uvicorn version selects a Selector loop on Windows when reload or mul
 
 ## Environment variables
 
-Environment variables override `.env`; all secrets remain on the server.
+`OPENAI_API_KEY` is read **only from the `.env` file in the project root**, resolved relative to `backend/config.py`; system, terminal, and IDE environment keys cannot override it. Enter the literal key, not a `${VARIABLE}` reference; missing or blank values disable planning instead of falling back to another credential. Restart the backend after changing `.env`; startup logs show the credential file path and whether a key is configured, never the key itself. Other settings retain normal environment-variable precedence; all secrets remain on the server.
+
+Docker Compose mounts `.env` read-only at `/app/.env`; keep it readable by container UID 10001 and never bake it into the image. For other container hosts, mount a secret file at `/app/.env` containing `OPENAI_API_KEY=...`; an environment-only API key is intentionally ignored. A correct key can still receive HTTP 429 for account quota or rate limits; changing the credential source does not itself resolve those account limits.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -119,11 +121,26 @@ Environment variables override `.env`; all secrets remain on the server.
 | `MAX_SESSION_TOKENS` | `60000` | Conservative allowance including regeneration and retries |
 | `MAX_MODEL_CALLS` | `32` | Request attempts, including retries |
 | `API_TIMEOUT_SECONDS` | `35` | One OpenAI request timeout |
+| `SEARCH_PROVIDERS` | `bing,duckduckgo,google` | Ordered public search providers; comma-separated subset of these names |
 | `DATA_DIR` | `data` | SQLite/screenshots; `/app/data` in Docker |
 | `FRONTEND_DIR` | `frontend/dist` | Built frontend path |
 | `PORT` | `8000` in Docker | Container HTTP listener |
 
 Before each model call, a conservative input/schema/output token allowance is reserved; actual usage replaces it after a successful response, while failed-call estimates remain reserved. This can stop a session early and is not a dollar-denominated spending cap; configure project billing controls separately.
+
+### Research reliability and efficiency
+
+Explicit HTTP(S) URLs in the approved request are opened before searching. Accessible source pages automatically receive READ_PAGE and EXTRACT, with exact whitespace-normalized quote verification before more navigation; a simple answerable page normally follows NAVIGATE → READ_PAGE → EXTRACT → DONE, followed by synthesis. This is the intended path, not a measured action-count guarantee.
+
+`SEARCH_PROVIDERS` controls fallback order without additional API keys. A normalized query tries each permitted provider once; empty results or blocked searches move to the next provider, and access-denied/challenge domains are excluded for that run. Equivalent visited URLs, tracking variants, repeated queries, unchanged reads/extractions, and no-progress loops are bounded. A 404 prevents retrying that URL; two ordinary navigation failures exhaust its host. Public search availability depends on the provider and network: there is no CAPTCHA solving, stealth, or guaranteed accessible search engine.
+
+DOM observations exclude scripts, navigation, forms, hidden text, and repeated boilerplate. Extraction receives at most 6,000 characters; action decisions receive a 1,400-character preview and at most 20 links, with repeated text replaced by an unchanged marker. History is limited to five actions, quotes to 600 characters each, and report evidence is selected across sources within a bounded UTF-8 context. Japanese and other languages are retained; generated findings follow the requested language and preserve numerical units and qualifications.
+
+The existing session budgets are unchanged. Phase-specific output limits, two-attempt bounded retries, deterministic direct-page decisions, and evidence-based early stopping reduce model work. Browsing and extraction reserve one request plus estimated tokens for the final report, including space for new passages. Reported input/output usage stays separate from conservative reservations for calls without usage data; see the [OpenAI token accounting guide](https://developers.openai.com/api/docs/guides/token-counting).
+
+Checklist criteria are assessed against verified passages and cited report evidence; one blocked website does not fail a high-level objective. Completed research requires substantive cited findings, model-assessed coverage of the requested goal, verified requested sources, and no reported information gaps. Partial research retains useful evidence with gaps; no verified evidence means a failed session. A synthesis failure produces a deterministic partial quotation report with original source links, without claiming those original-language quotes were translated or summarized.
+
+Audit events record action reasons, provider fallback, sanitized failures, evidence counts, model usage, and stopping reasons. Semantic relevance, translation, and claim entailment remain model judgments; exact quote matching proves provenance, not correctness of every interpretation. Long pages and large comparisons may exceed the bounded evidence context, and source URLs may later change. These reliability changes were reviewed from source only: no tests, application launch, browser execution, or runtime verification were performed.
 
 ## Architecture
 
@@ -146,7 +163,7 @@ flowchart LR
 
 ### How the LLM generates actionable commands
 
-`responses.parse(..., text_format=Action)` returns a Pydantic object with a fixed command and bounded arguments; semantic validation precedes an explicit Python `match` branch and another browser observation. The model cannot execute code or choose arbitrary selectors; `CLICK` follows a numbered observed anchor through the same safe navigation checks.
+`responses.create(..., text={"format": {"type": "json_schema", ...}})` requests a strict Pydantic-derived schema; reported token usage is recorded before `Action.model_validate_json(...)` validates the output, including when parsing fails. Semantic validation precedes an explicit Python `match` branch and another browser observation. The model cannot execute code or choose arbitrary selectors; `CLICK` follows a numbered observed anchor through the same safe navigation checks.
 
 Illustrative command, not a prerecorded result:
 

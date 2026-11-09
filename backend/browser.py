@@ -1,12 +1,14 @@
 # backend/browser.py — isolated Playwright browser and a fixed read-only action interpreter.
 import asyncio
+import base64
 import logging
 import sys
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs, quote_plus, urlsplit
 
 from playwright.async_api import async_playwright
 
 from backend.models import Action
+from backend.research import SEARCH_URLS, domain, is_search
 from backend.safety import EgressProxy, validate_url
 
 logger = logging.getLogger(__name__)
@@ -14,6 +16,15 @@ logger = logging.getLogger(__name__)
 
 class BrowserStartupError(RuntimeError):
     """Expose only application-authored, actionable browser startup errors."""
+
+
+class NavigationError(RuntimeError):
+    """Carry a sanitized access reason and status without raw browser exception content."""
+
+    def __init__(self, message, url, status=None, restricted=False):
+        # Keep operational metadata separate from the safe user-facing message.
+        super().__init__(message)
+        self.url, self.status, self.restricted = url, status, restricted
 
 
 class ResearchBrowser:
@@ -29,6 +40,8 @@ class ResearchBrowser:
         self.page = None
         self.links = []
         self.blocked_requests = 0
+        self.blocked_domains = set()
+        self.usable_pages = set()
 
     async def start(self):
         # Detect an incompatible host loop before creating the proxy or Playwright transport.
@@ -79,6 +92,9 @@ class ResearchBrowser:
         # Apply URL and method checks to documents, redirects, fetches, and subresources alike.
         try:
             validate_url(route.request.url)
+            host = domain(route.request.url)
+            if any(host == item or host.endswith("." + item) for item in self.blocked_domains):
+                raise ValueError("This host was excluded after an access restriction or repeated failures")
             if route.request.method not in {"GET", "HEAD"} or route.request.resource_type in {"media", "font", "websocket"}:
                 raise ValueError("Write requests and unnecessary resource types are disabled")
             await route.continue_()
@@ -96,35 +112,86 @@ class ResearchBrowser:
         # Read the rendered DOM and enumerate only genuine navigation anchors.
         if not self.page or self.page.is_closed():
             raise RuntimeError("Active browser page is no longer available")
-        result = await self.page.evaluate("""() => {
+        result = await self.page.evaluate(r"""() => {
             // Return bounded visible text and public navigation targets from the current DOM.
             const links = [...document.querySelectorAll('a[href]')]
                 .filter(a => a.getClientRects().length && a.innerText.trim())
-                .slice(0, 90).map((a, id) => ({id, text: a.innerText.trim().slice(0, 140), url: a.href}));
-            // Prefer primary content and shift the text window as long pages are scrolled.
+                .slice(0, 60).map((a, id) => ({id, text: a.innerText.trim().slice(0, 100), url: a.href}));
+            // Walk visible primary text without menus, scripts, forms, or repeated boilerplate.
             const primary = document.querySelector('main, [role="main"], article') || document.body;
-            const text = primary?.innerText?.trim() ? primary.innerText : (document.body?.innerText || '');
+            const walker = document.createTreeWalker(primary || document.documentElement, NodeFilter.SHOW_TEXT);
+            const chunks = [], seen = new Set();
+            let node, length = 0;
+            while ((node = walker.nextNode()) && length < 100000) {
+                const parent = node.parentElement;
+                if (!parent || !parent.getClientRects().length ||
+                    parent.closest('script,style,noscript,svg,nav,footer,button,form,[role="navigation"],[aria-hidden="true"]') ||
+                    getComputedStyle(parent).visibility === 'hidden') continue;
+                const value = node.textContent.trim();
+                if (!value || (value.length > 80 && seen.has(value))) continue;
+                chunks.push(value); seen.add(value); length += value.length;
+            }
+            const text = chunks.join('\n');
             const ratio = window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
-            const start = Math.floor(Math.max(0, text.length - 14000) * Math.min(1, ratio));
-            return {title: document.title, text: text.slice(start, start + 14000), links};
+            const start = Math.floor(Math.max(0, text.length - 6000) * Math.min(1, ratio));
+            // Gate detection also sees form text that is deliberately excluded from evidence.
+            const gate = (document.body?.innerText || '').slice(0, 1600);
+            return {title: document.title.slice(0, 180), text: text.slice(start, start + 6000),
+                    links, gate, has_more_text: start + 6000 < text.length};
         }""")
-        self.links = result["links"]
-        return {"url": self.page.url, **result, "tabs": [{"id": index, "url": page.url} for index, page in enumerate(self.context.pages)], "blocked_requests": self.blocked_requests}
+        # Unwrap only known public search redirect links, then reapply URL safety validation.
+        links = []
+        for link in result["links"]:
+            try:
+                parts = urlsplit(link["url"])
+                query = parse_qs(parts.query)
+                if parts.hostname in {"duckduckgo.com", "html.duckduckgo.com"} and "uddg" in query:
+                    link["url"] = query["uddg"][0]
+                elif parts.hostname == "www.bing.com" and parts.path == "/ck/a" and query.get("u", [""])[0].startswith("a1"):
+                    encoded = query["u"][0][2:]
+                    link["url"] = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode("utf-8")
+                validate_url(link["url"])
+                if is_search(self.page.url) and is_search(link["url"]):
+                    continue
+                if not any(item["url"] == link["url"] for item in links):
+                    links.append(link)
+            except (ValueError, UnicodeError):
+                continue
+        result["links"] = self.links = links[:40]
+        gate = result.pop("gate").casefold()
+        title = result["title"].casefold()
+        issue = None
+        if ("/sorry/" in self.page.url and is_search(self.page.url)) or any(
+            phrase in gate for phrase in ("verify you are human", "unusual traffic from your computer",
+                                         "automated queries", "confirm you are not a robot",
+                                         "unfortunately, bots use duckduckgo too", "please complete the following challenge",
+                                         "人間であることを確認", "ロボットではないことを確認")):
+            issue = "Automated access challenge; use another source without bypassing it"
+        elif any(phrase in title for phrase in ("access denied", "just a moment", "captcha", "403 forbidden")):
+            issue = "Access denied or browser challenge; use another source"
+        return {"url": self.page.url, **result, "usable": self.page in self.usable_pages and not issue,
+                "access_issue": issue, "tabs": [{"id": index, "url": page.url} for index, page in enumerate(self.context.pages)],
+                "blocked_requests": self.blocked_requests}
 
     async def navigate(self, url):
         # Navigation retains ordinary TLS validation and revalidates redirected requests.
         validate_url(url)
+        self.usable_pages.discard(self.page)
         response = await self.page.goto(url, wait_until="domcontentloaded")
         if response and response.status >= 400:
-            raise RuntimeError(f"Website returned HTTP {response.status}")
+            raise NavigationError(f"Website returned HTTP {response.status}; choose another page or source",
+                                  self.page.url, response.status, response.status in {401, 403, 429})
         if response and not any(kind in response.headers.get("content-type", "") for kind in ("text/html", "text/plain", "application/xhtml")):
             raise ValueError("This version supports HTML and plain text pages only")
+        self.usable_pages.add(self.page)
 
-    async def execute(self, action: Action):
+    async def execute(self, action: Action, search_provider=None):
         # Interpret fields explicitly; model output is never evaluated as code or a selector.
         match action.command:
             case "SEARCH":
-                await self.navigate("https://www.google.com/search?q=" + quote_plus(action.query))
+                if search_provider not in SEARCH_URLS:
+                    raise ValueError("A configured search provider is required")
+                await self.navigate(SEARCH_URLS[search_provider] + quote_plus(action.query))
             case "NAVIGATE":
                 await self.navigate(action.url)
             case "CLICK":
@@ -146,12 +213,18 @@ class ResearchBrowser:
                     raise ValueError("Unknown tab ID")
                 self.page = self.context.pages[action.tab_id]
             case "BACK":
-                await self.page.go_back(wait_until="domcontentloaded")
+                self.usable_pages.discard(self.page)
+                response = await self.page.go_back(wait_until="domcontentloaded")
+                if response and response.status < 400:
+                    self.usable_pages.add(self.page)
             case "WAIT":
                 await asyncio.sleep(action.seconds)
             case "READ_PAGE" | "EXTRACT" | "DONE":
                 pass
-        return await self.observe()
+        observation = await self.observe()
+        if observation["access_issue"]:
+            raise NavigationError(observation["access_issue"], observation["url"], restricted=True)
+        return observation
 
     async def screenshot(self):
         # Screenshots come directly from Chromium; no simulated browser images are created.
@@ -161,6 +234,7 @@ class ResearchBrowser:
         # Detach ownership first so startup cleanup and the agent's finally block are idempotent.
         browser, manager = self.browser, self.playwright_manager
         self.browser = self.context = self.page = self.runtime = self.playwright_manager = None
+        self.usable_pages.clear()
         try:
             if browser:
                 await asyncio.wait_for(browser.close(), timeout=5)

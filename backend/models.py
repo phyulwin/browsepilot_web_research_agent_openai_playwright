@@ -59,19 +59,36 @@ class Action(StrictModel):
             raise ValueError(f"{self.command} requires {field}")
         if self.command == "SEARCH" and not (1 <= len(self.query or "") <= 400):
             raise ValueError("Search query must contain 1–400 characters")
+        # Reject unused arguments so unrelated URLs or credentials cannot enter action audits.
+        used = {required[self.command]} if self.command in required else set()
+        if self.command == "NEW_TAB":
+            used.add("url")
+        for name in ("url", "query", "link_id", "tab_id", "direction", "seconds"):
+            if name not in used and getattr(self, name) is not None:
+                raise ValueError("Unused action arguments must be null")
         return self
 
 
 class ExtractedQuote(StrictModel):
     """Capture a verbatim passage that can be checked against browser text."""
 
-    quote: str = Field(min_length=15, max_length=1200)
+    quote: str = Field(min_length=15, max_length=600)
 
 
 class Extraction(StrictModel):
     """Return a bounded set of useful passages, never invented observations."""
 
     passages: list[ExtractedQuote] = Field(max_length=6)
+    completed_steps: list[int] = Field(max_length=8)
+    goal_satisfied: bool
+    missing_information: list[str] = Field(max_length=8)
+
+
+class StepEvidence(StrictModel):
+    """Connect a completed objective to actual evidence IDs, not an action outcome."""
+
+    step: int = Field(ge=1, le=8)
+    evidence_ids: list[int] = Field(min_length=1, max_length=8)
 
 
 class Claim(StrictModel):
@@ -97,6 +114,7 @@ class Report(StrictModel):
     comparisons: list[Comparison] = Field(max_length=6)
     missing_information: list[str] = Field(max_length=12)
     completion_status: Literal["completed", "partial"]
+    completed_steps: list[StepEvidence] = Field(max_length=8)
 
 
 class ResearchRequest(StrictModel):

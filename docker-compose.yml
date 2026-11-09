@@ -11,6 +11,13 @@ services:
       PORT: "8000"
     volumes:
       - browsepilot-data:/app/data
+      # The API key is read only from this file, not from container environment variables.
+      - type: bind
+        source: ./.env
+        target: /app/.env
+        read_only: true
+        bind:
+          create_host_path: false
     shm_size: "512mb"
     init: true
     restart: unless-stopped
