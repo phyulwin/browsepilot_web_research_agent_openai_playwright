@@ -21,7 +21,8 @@ def project_api_key():
 class Settings(BaseSettings):
     """Load bounded execution settings without exposing credentials to clients."""
 
-    model_config = SettingsConfigDict(env_file=DOTENV_FILE, env_file_encoding="utf-8-sig", extra="ignore")
+    # Startup validation errors must never include dotenv input values in Cloud Run logs.
+    model_config = SettingsConfigDict(env_file=DOTENV_FILE, env_file_encoding="utf-8-sig", extra="ignore", hide_input_in_errors=True)
     openai_api_key: str = Field(default="", repr=False)
     openai_model: str = "gpt-4.1-mini"
     data_dir: Path = Path("data")
@@ -34,7 +35,7 @@ class Settings(BaseSettings):
     max_model_calls: int = Field(default=32, ge=4, le=100)
     api_timeout_seconds: int = Field(default=35, ge=5, le=90)
     search_providers: str = "bing,duckduckgo,google"
-    access_password: str = ""
+    access_password: str = Field(default="", repr=False)
     app_env: str = "development"
     cookie_secure: bool = False
     allowed_origins: str = ""

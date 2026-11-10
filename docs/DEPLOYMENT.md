@@ -1,5 +1,20 @@
 # BrowsePilot university demo deployment
 
+## November 10, 2026 deployment repair
+
+Project `webagent-514309`, region `us-central1`, service `browsepilot-demo` now serves revision `browsepilot-demo-00002-lck` at https://browsepilot-demo-823141108252.us-central1.run.app. Health and the GitHub Pages CORS preflight returned HTTP 200; logs confirmed startup on port 8080 without error-severity entries.
+
+The previous revision failed before binding its port because Secret Manager version 1 contained a workspace password shorter than the 16-character production minimum. The API key was preserved and a generated strong password stored in **version 2** of `browsepilot-demo-env`; do not redeploy this project with version 1. Retrieve the current password privately in Google Cloud Console → Secret Manager → browsepilot-demo-env → version 2. No credential values are printed in source or deployment output. Configuration validation now hides input values in tracebacks and excludes the password from settings representations.
+
+The rebuilt Linux AMD64 image is `us-central1-docker.pkg.dev/webagent-514309/browsepilot-demo/backend:v1`, digest `sha256:a10fe24c15f2033a070d3e74e2441695f36a8371ca5fe5fdb8384f1b10b63638`. Cloud Run uses 1 CPU, 2 GiB RAM, service min/max 1, revision max 1, instance-based billing, and a 1,500-second HTTP timeout; SQLite remains temporary.
+
+For this existing deployment use PowerShell and `gcloud.cmd`, avoiding Git Bash mount-path conversion; the generic fresh-project instructions later in this document use Bash.
+
+```powershell
+# Update the existing service while retaining its repaired Secret Manager configuration.
+gcloud.cmd run deploy browsepilot-demo --project=webagent-514309 --region=us-central1 --image=us-central1-docker.pkg.dev/webagent-514309/browsepilot-demo/backend:v1 --service-account=browsepilot-demo@webagent-514309.iam.gserviceaccount.com --allow-unauthenticated --execution-environment=gen2 --port=8080 --cpu=1 --memory=2Gi --concurrency=20 --no-cpu-throttling --min=1 --max=1 --max-instances=1 --timeout=1500s --update-env-vars=APP_ENV=production,ALLOWED_ORIGINS=https://phyulwin.github.io --update-secrets=/secrets/browsepilot/env=browsepilot-demo-env:2
+```
+
 Configuration is prepared, not deployed or runtime-verified. No tests were created or run. Execute the publication commands below only when you authorize deployment; they create billable resources. Use a current Google Cloud CLI, Docker Desktop running Linux containers, and Git Bash from the repository root on Windows (the commands below are Bash, not PowerShell).
 
 ## Architecture and limits
