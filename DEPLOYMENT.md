@@ -113,3 +113,20 @@ Disable `DEPLOY_PAGES` to stop future automatic frontend publications; use **Set
 ## Local development remains available
 
 Leave frontend `VITE_API_URL` blank and `VITE_BASE_PATH=/` (see `frontend/.env.example`); Vite proxies `/api` locally. Keep your existing root `.env` and Windows `python -m backend.run` command. The default Docker target still includes the frontend and works with the existing Compose persistent local volume; only the explicitly selected `cloudrun` target uses temporary storage and its mounted secret configuration. No runtime validation of this deployment has been performed.
+
+
+---
+
+## Cloud deployment
+
+Use a Docker-capable **long-running host with persistent storage and unprivileged user namespaces**; a [DigitalOcean Docker Droplet](https://docs.digitalocean.com/products/marketplace/catalog/docker/) is one option that provides Docker and Compose. Static hosts and short-lived functions are insufficient for Chromium and SQLite.
+
+1. Create a Docker-capable Linux VM with at least 2 GB RAM, SSH into it, and clone this repository.
+2. Copy `.env.example` to `.env`, restrict that file to the administrator, and set `OPENAI_API_KEY`, `OPENAI_MODEL`, `APP_ENV=production`, and a unique `ACCESS_PASSWORD` of at least 16 characters.
+3. Set `COOKIE_SECURE=true` and `ALLOWED_ORIGINS=https://YOUR-DOMAIN` to the exact HTTPS browser origin.
+4. Run `docker compose up --build -d`; Compose installs the sandbox seccomp profile and mounts persistent storage at `/app/data`, owned by UID/GID 10001.
+5. Point a DNS name to the VM, configure an HTTPS reverse proxy on the host to forward to `127.0.0.1:8000`, and restrict inbound traffic to HTTPS and administrative SSH.
+6. Use `/api/health` as the health probe; disable proxy buffering for SSE, allow response streams longer than the research deadline, and retain **one application instance with one Uvicorn worker**.
+7. Run the focused example in [DEMO_GUIDE.md](DEMO_GUIDE.md) and verify its citations before presenting; back up the named Docker data volume.
+
+Trust forwarded headers only from the actual proxy addresses using `FORWARDED_ALLOW_IPS`; the explicit allowed origin also supports HTTPS termination without trusting arbitrary forwarded headers. Managed container providers must support the sandbox namespace/profile requirements in [security/README.md](security/README.md). No public deployment is claimed.
