@@ -8,7 +8,7 @@ BrowsePilot is a public-web research assistant for **CS4680: Prompt Engineering*
 
 Repetitive research means opening pages, comparing claims, tracking sources, and noticing gaps; BrowsePilot consolidates that work into a transparent workspace with explicit approval and a durable audit trail.
 
-![Image](screenshot.png)
+![Image](docs/screenshots/screenshot.png)
 
 ## Features
 
