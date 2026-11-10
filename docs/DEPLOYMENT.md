@@ -15,7 +15,9 @@ For this existing deployment use PowerShell and `gcloud.cmd`, avoiding Git Bash 
 gcloud.cmd run deploy browsepilot-demo --project=webagent-514309 --region=us-central1 --image=us-central1-docker.pkg.dev/webagent-514309/browsepilot-demo/backend:v1 --service-account=browsepilot-demo@webagent-514309.iam.gserviceaccount.com --allow-unauthenticated --execution-environment=gen2 --port=8080 --cpu=1 --memory=2Gi --concurrency=20 --no-cpu-throttling --min=1 --max=1 --max-instances=1 --timeout=1500s --update-env-vars=APP_ENV=production,ALLOWED_ORIGINS=https://phyulwin.github.io --update-secrets=/secrets/browsepilot/env=browsepilot-demo-env:2
 ```
 
-Configuration is prepared, not deployed or runtime-verified. No tests were created or run. Execute the publication commands below only when you authorize deployment; they create billable resources. Use a current Google Cloud CLI, Docker Desktop running Linux containers, and Git Bash from the repository root on Windows (the commands below are Bash, not PowerShell).
+The frontend is live at https://phyulwin.github.io/browsepilot_web_research_agent_openai_playwright/ after successful [Actions run 42792160533](https://github.com/phyulwin/browsepilot_web_research_agent_openai_playwright/actions/runs/42792160533). Repository variables `VITE_API_URL` and `DEPLOY_PAGES=true` are configured. A real Chromium browser loaded the published site (HTTP 200), signed in, and fetched authenticated backend configuration (HTTP 200) without JavaScript errors; anonymous session access returned 401. No paid AI research session was created for these deployment checks.
+
+No unit or integration test suites were created or run. The remaining sections describe fresh-project setup, costs, and teardown; do not repeat resource creation for the live project. In particular, the generic fresh-project version-1 secret mount below must be version 2 for `webagent-514309`. Generic examples use Bash; the repair command above uses Windows PowerShell and `gcloud.cmd`.
 
 ## Architecture and limits
 
@@ -127,7 +129,7 @@ Disable `DEPLOY_PAGES` to stop future automatic frontend publications; use **Set
 
 ## Local development remains available
 
-Leave frontend `VITE_API_URL` blank and `VITE_BASE_PATH=/` (see `frontend/.env.example`); Vite proxies `/api` locally. Keep your existing root `.env` and Windows `python -m backend.run` command. The default Docker target still includes the frontend and works with the existing Compose persistent local volume; only the explicitly selected `cloudrun` target uses temporary storage and its mounted secret configuration. No runtime validation of this deployment has been performed.
+Leave frontend `VITE_API_URL` blank and `VITE_BASE_PATH=/` (see `frontend/.env.example`); Vite proxies `/api` locally. Keep your existing root `.env` and Windows `python -m backend.run` command. The default Docker target still includes the frontend and works with the existing Compose persistent local volume; only the explicitly selected `cloudrun` target uses temporary storage and its mounted secret configuration. Deployment verification results are recorded at the top of this document.
 
 
 ---
